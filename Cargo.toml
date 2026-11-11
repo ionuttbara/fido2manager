@@ -1,0 +1,25 @@
+[package]
+name = "SecurityKeyManager"
+version = "1.0.0"
+edition = "2021"
+authors = ["ionuttbara"]
+description = "Security Key Manager"
+
+[dependencies]
+slint = "1.8"
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Security_Credentials",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Threading",
+    "Security_Credentials_UI",
+    "Win32_Graphics_Dwm",
+] }
+regex = "1.10"
+anyhow = "1.0"
+ctap-hid-fido2 = "3.5"
+hex = "0.4"
+
+[build-dependencies]
+slint-build = "1.8"
+winres = "0.1"

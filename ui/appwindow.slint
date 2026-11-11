@@ -1,0 +1,560 @@
+import { Button, LineEdit, ScrollView } from "std-widgets.slint";
+
+export struct PasskeyEntry {
+    credential_id: string,
+    user: string,
+    user_id: string,
+    display_name: string,
+    domain: string,
+    protection: string,
+}
+
+export struct FingerprintEntry {
+    index: string,
+    description: string,
+}
+
+export struct InfoEntry {
+    key: string,
+    value: string,
+}
+
+export component MainWindow inherits Window {
+    title: "Security Key Manager";
+    icon: @image-url("../assets/icon.png");
+    min-width: 640px;
+    min-height: 520px;
+    background: #1e1e24;
+
+    in-out property <[string]> device_list: [];
+    in-out property <int> selected_device_index: -1;
+    
+    in-out property <[InfoEntry]> info_list: [];
+    in-out property <[InfoEntry]> settings_list: [];
+    in-out property <[PasskeyEntry]> passkeys: [];
+    in-out property <[FingerprintEntry]> fingerprints: [];
+
+    in-out property <bool> has_passkeys: false;
+    in-out property <bool> has_bio: false;
+    in-out property <bool> has_uv: false;
+    in-out property <bool> device_ready: false;
+    in-out property <string> status_message: "Scanning ports...";
+    in-out property <color> accent_color: #61afef;
+
+    in-out property <int> active_tab: 0; 
+    in-out property <int> selected_passkey_index: -1;
+    in-out property <int> selected_fingerprint_index: -1;
+    in-out property <bool> extra_approval_granted: false;
+
+    // Modals
+    in-out property <bool> show_pin_modal: false;
+    in-out property <string> pin_input_text: "";
+    in-out property <string> pin_error_message: "";
+    in-out property <int> pending_device_index: -1;
+    in-out property <int> pin_retries_left: -1;
+
+    in-out property <bool> show_change_pin_modal: false;
+    in-out property <string> new_pin_input: "";
+    in-out property <string> confirm_new_pin_input: "";
+    in-out property <string> change_pin_error_message: "";
+
+    in-out property <bool> show_delete_modal: false;
+    in-out property <string> delete_domain: "";
+    in-out property <string> delete_cid: "";
+    
+    in-out property <bool> show_about_modal: false;
+    in-out property <bool> show_rename_fingerprint_modal: false;
+    in-out property <string> rename_fingerprint_id: "";
+    in-out property <string> rename_fingerprint_name: "";
+
+    callback request_device_access(int);
+    callback submit_pin(int, string);
+    callback cancel_pin();
+    
+    callback request_change_pin();
+    callback submit_change_pin(string, string);
+    callback cancel_change_pin();
+
+    callback unlock_via_windows_hello();
+    callback confirm_delete_passkey(string);
+    callback open_website(string);
+    callback open_windows_passkey_settings();
+    callback open_github_repo();
+    callback add_fingerprint();
+    callback delete_fingerprint(string);
+    callback enforce_uv();
+    callback reset_token();
+    callback refresh_devices();
+    callback refresh_data();
+    callback lock_session();
+    callback test_touch();
+    callback wink_key();
+    callback rename_fingerprint(string, string);
+
+    // Modal Overlay: About
+    if root.show_about_modal : Rectangle {
+        z: 103;
+        background: #000000D9;
+        TouchArea {}
+
+        Rectangle {
+            width: root.width < 432px ? root.width - 32px : 400px;
+            height: 320px;
+            background: #252530;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #3f3f4e;
+
+            VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+                alignment: center;
+
+                HorizontalLayout {
+                    alignment: center;
+                    Image {
+                        source: @image-url("../assets/icon.png");
+                        width: 80px;
+                        height: 80px;
+                    }
+                }
+
+                Text { text: "Security Key Manager v1.0"; color: #ffffff; font-size: 18px; font-weight: 700; horizontal-alignment: center; }
+                Text { text: "Author: ionuttbara"; color: root.accent_color; font-size: 14px; horizontal-alignment: center; font-weight: 700; }
+                
+                Text {
+                    text: "Physical security keys management (e.g., YubiKey, FIDO Key, etc.)";
+                    color: #abb2bf;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    padding-top: 10px;
+                    spacing: 12px;
+                    alignment: center;
+                    Button { text: "GitHub Repository"; clicked => { root.open_github_repo(); } }
+                    Button { text: "Close"; clicked => { root.show_about_modal = false; } }
+                }
+            }
+        }
+    }
+
+    // Modal Overlay: Delete Passkey Confirmation
+    if root.show_delete_modal : Rectangle {
+        z: 102;
+        background: #000000D9;
+        TouchArea {}
+
+        Rectangle {
+            width: root.width < 452px ? root.width - 32px : 420px;
+            height: 220px;
+            background: #252530;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #3f3f4e;
+
+            VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text { text: "Delete Passkey?"; color: #ffffff; font-size: 16px; font-weight: 700; horizontal-alignment: center; }
+                
+                Text {
+                    text: "Are you sure you want to delete this passkey?\nDomain: " + root.delete_domain;
+                    color: #abb2bf;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    spacing: 12px;
+                    alignment: center;
+                    Button { text: "Yes, delete"; clicked => { root.confirm_delete_passkey(root.delete_cid); } }
+                    Button { text: "No, cancel"; clicked => { root.show_delete_modal = false; } }
+                }
+
+                Button {
+                    text: "Go to website to delete (" + root.delete_domain + ")";
+                    clicked => { root.open_website(root.delete_domain); }
+                }
+            }
+        }
+    }
+
+    // Modal Overlay: Rename fingerprint
+    if root.show_rename_fingerprint_modal : Rectangle {
+        z: 102;
+        background: #000000D9;
+        TouchArea {}
+        Rectangle {
+            width: root.width < 452px ? root.width - 32px : 420px;
+            height: 210px;
+            background: #252530;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #3f3f4e;
+            VerticalLayout {
+                padding: 22px;
+                spacing: 14px;
+                Text { text: "Rename fingerprint"; color: #ffffff; font-size: 16px; font-weight: 700; horizontal-alignment: center; }
+                LineEdit {
+                    placeholder-text: "Friendly name";
+                    text <=> root.rename_fingerprint_name;
+                    accepted => { if root.rename_fingerprint_name != "" { root.rename_fingerprint(root.rename_fingerprint_id, root.rename_fingerprint_name); } }
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: center;
+                    Button { text: "Cancel"; clicked => { root.show_rename_fingerprint_modal = false; } }
+                    Button { text: "Save"; enabled: root.rename_fingerprint_name != ""; clicked => { root.rename_fingerprint(root.rename_fingerprint_id, root.rename_fingerprint_name); } }
+                }
+            }
+        }
+    }
+
+    // Modal Overlay: Access PIN
+    if root.show_pin_modal : Rectangle {
+        z: 100;
+        background: #000000D9;
+        TouchArea {} 
+
+        Rectangle {
+            width: root.width < 392px ? root.width - 32px : 360px;
+            height: 240px;
+            background: #252530;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #3f3f4e;
+
+            VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text { 
+                    text: "FIDO2 Authentication"; 
+                    color: #ffffff; 
+                    font-size: 16px; 
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: root.pin_retries_left >= 0 ? "Retries left: " + root.pin_retries_left : "Checking device status...";
+                    color: root.pin_retries_left > 3 ? #98c379 : (root.pin_retries_left > 0 ? #e5c07b : #e06c75);
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                }
+
+                LineEdit {
+                    input-type: password;
+                    placeholder-text: "Enter PIN...";
+                    text <=> root.pin_input_text;
+                    accepted => { root.submit_pin(root.pending_device_index, root.pin_input_text); }
+                }
+
+                Text { 
+                    text: root.pin_error_message; 
+                    color: #e06c75; 
+                    font-size: 13px; 
+                    horizontal-alignment: center;
+                }
+
+                HorizontalLayout {
+                    spacing: 12px;
+                    alignment: center;
+                    Button { text: "Cancel"; clicked => { root.cancel_pin(); } }
+                    Button { 
+                        text: "Unlock"; 
+                        enabled: root.pin_input_text != "" && root.pin_retries_left != 0;
+                        clicked => { root.submit_pin(root.pending_device_index, root.pin_input_text); } 
+                    }
+                }
+            }
+        }
+    }
+
+    // Modal Overlay: Change PIN
+    if root.show_change_pin_modal : Rectangle {
+        z: 101;
+        background: #000000D9;
+        TouchArea {}
+
+        Rectangle {
+            width: root.width < 392px ? root.width - 32px : 360px;
+            height: 260px;
+            background: #252530;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #3f3f4e;
+
+            VerticalLayout {
+                padding: 24px;
+                spacing: 12px;
+
+                Text { text: "Change Device PIN"; color: #ffffff; font-size: 16px; font-weight: 700; horizontal-alignment: center; }
+
+                LineEdit {
+                    input-type: password;
+                    placeholder-text: "New PIN (min 4 chars)";
+                    text <=> root.new_pin_input;
+                }
+                LineEdit {
+                    input-type: password;
+                    placeholder-text: "Confirm New PIN";
+                    text <=> root.confirm_new_pin_input;
+                }
+
+                Text { 
+                    text: root.change_pin_error_message; 
+                    color: #e06c75; 
+                    font-size: 13px; 
+                    horizontal-alignment: center;
+                }
+
+                HorizontalLayout {
+                    spacing: 12px;
+                    alignment: center;
+                    Button { text: "Cancel"; clicked => { root.cancel_change_pin(); } }
+                    Button { 
+                        text: "Change PIN"; 
+                        enabled: root.new_pin_input != "" && root.confirm_new_pin_input != "";
+                        clicked => { root.submit_change_pin(root.new_pin_input, root.confirm_new_pin_input); } 
+                    }
+                }
+            }
+        }
+    }
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 16px;
+
+        // Top Header - two compact rows so it stays usable on narrow windows
+        VerticalLayout {
+            spacing: 8px;
+            HorizontalLayout {
+                spacing: 10px;
+                height: 36px;
+                Text { text: "Detected Key:"; color: #e0e0e0; vertical-alignment: center; font-size: 14px; }
+                Rectangle {
+                    background: #2b2b36; border-radius: 4px; border-width: 1px; border-color: #3f3f4e; horizontal-stretch: 1;
+                    HorizontalLayout {
+                        padding-left: 12px; padding-right: 12px;
+                        Text {
+                            text: selected_device_index >= 0 && selected_device_index < device_list.length ? device_list[selected_device_index] : "Disconnected. Waiting for USB key...";
+                            color: selected_device_index >= 0 ? root.accent_color : #abb2bf; vertical-alignment: center; font-weight: 700;
+                            overflow: elide;
+                        }
+                    }
+                }
+                Button { text: "Scan"; clicked => { root.refresh_devices(); } }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                height: 34px;
+                Button { text: "Unlock (PIN)"; enabled: selected_device_index >= 0 && !root.device_ready; clicked => { root.request_device_access(root.selected_device_index); } }
+                Button { text: "Refresh Data"; enabled: root.device_ready; clicked => { root.refresh_data(); } }
+                Button { text: "Touch Test"; enabled: root.device_ready; clicked => { root.test_touch(); } }
+                Button { text: "Identify Key"; enabled: root.device_ready; clicked => { root.wink_key(); } }
+                Rectangle { horizontal-stretch: 1; background: #00000000; }
+                Button { text: "Lock"; enabled: root.device_ready; clicked => { root.lock_session(); } }
+                Button { text: "About"; clicked => { root.show_about_modal = true; } }
+            }
+        }
+
+        // Tabs
+        HorizontalLayout {
+            spacing: 8px;
+            height: 32px;
+
+            Button { text: "Hardware Specs"; primary: root.active_tab == 0; clicked => { root.active_tab = 0; } }
+            Button { text: "Passkeys (Resident Keys)"; enabled: root.device_ready; primary: root.active_tab == 1; clicked => { root.active_tab = 1; } }
+            Button { text: "Biometrics & Settings"; enabled: root.device_ready; primary: root.active_tab == 2; clicked => { root.active_tab = 2; } }
+        }
+
+        // Tab Content
+        Rectangle {
+            background: #252530;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: #353545;
+            horizontal-stretch: 1;
+            vertical-stretch: 1;
+
+            if root.active_tab == 0 : ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 8px;
+                    for item in root.info_list : Rectangle {
+                        height: 32px;
+                        background: #2c2c3a;
+                        border-radius: 4px;
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            Text { text: item.key; color: #abb2bf; width: 260px; vertical-alignment: center; font-weight: 700; }
+                            Text { 
+                                text: item.value; 
+                                color: root.accent_color; 
+                                vertical-alignment: center; 
+                                horizontal-stretch: 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.active_tab == 1 : VerticalLayout {
+                padding: 14px;
+                spacing: 10px;
+                HorizontalLayout {
+                    height: 30px;
+                    Text { text: "Discoverable credentials: " + root.passkeys.length; color: #ffffff; font-weight: 700; vertical-alignment: center; }
+                    Rectangle { horizontal-stretch: 1; background: #00000000; }
+                    Button { text: "Refresh"; clicked => { root.refresh_data(); } }
+                    Button { text: "Windows Passkeys"; clicked => { root.open_windows_passkey_settings(); } }
+                }
+                ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        spacing: 7px;
+                        for pk[idx] in root.passkeys : Rectangle {
+                            height: 92px;
+                            background: root.selected_passkey_index == idx ? #3e4451 : #2c2c3a;
+                            border-radius: 6px;
+                            TouchArea { clicked => { root.selected_passkey_index = idx; } }
+                            VerticalLayout {
+                                padding: 10px; spacing: 4px;
+                                HorizontalLayout {
+                                    Text { text: pk.domain; color: root.accent_color; font-weight: 700; font-size: 14px; overflow: elide; horizontal-stretch: 1; }
+                                    Text { text: pk.protection; color: #98c379; font-size: 11px; }
+                                }
+                                Text { text: (pk.display_name != "" ? pk.display_name : pk.user) + (pk.user != "" ? "  @" + pk.user : ""); color: #e0e0e0; overflow: elide; }
+                                Text { text: "Credential ID: " + pk.credential_id; color: #d19a66; font-size: 10px; overflow: elide; }
+                                Text { text: "User ID: " + pk.user_id; color: #e5c07b; font-size: 10px; overflow: elide; }
+                            }
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 8px; height: 36px;
+                    Button {
+                        text: "Delete Selected Passkey";
+                        enabled: root.selected_passkey_index >= 0 && root.selected_passkey_index < root.passkeys.length;
+                        clicked => {
+                            root.delete_domain = root.passkeys[root.selected_passkey_index].domain;
+                            root.delete_cid = root.passkeys[root.selected_passkey_index].credential_id;
+                            root.show_delete_modal = true;
+                        }
+                    }
+                    Button { text: root.extra_approval_granted ? "Extra Approval Granted" : "Windows Hello + Touch"; enabled: !root.extra_approval_granted; clicked => { root.unlock_via_windows_hello(); } }
+                }
+            }
+
+            if root.active_tab == 2 : VerticalLayout {
+                padding: 16px;
+                spacing: 12px;
+                
+                HorizontalLayout {
+                    alignment: space-between;
+                    Text { text: "Device Settings"; font-size: 16px; color: #ffffff; font-weight: 700; vertical-alignment: center;}
+                    Button { text: "Windows Passkey Manager"; clicked => { root.open_windows_passkey_settings(); } }
+                }
+                
+                ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        spacing: 6px;
+                        for item in root.settings_list : Rectangle {
+                            height: 32px;
+                            background: #2c2c3a;
+                            border-radius: 4px;
+                            HorizontalLayout {
+                                padding-left: 12px;
+                                padding-right: 12px;
+                                Text { text: item.key; color: #abb2bf; width: 260px; vertical-alignment: center; font-weight: 700; }
+                                Text { 
+                                    text: item.value; 
+                                    color: root.accent_color; 
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle { height: 1px; background: #3f3f4e; }
+
+                Text { text: "Enrolled Fingerprint Templates"; font-size: 16px; color: #ffffff; font-weight: 700;}
+                ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        spacing: 6px;
+                        for fp[idx] in root.fingerprints : Rectangle {
+                            height: 40px;
+                            background: root.selected_fingerprint_index == idx ? #3e4451 : #2c2c3a;
+                            border-radius: 6px;
+                            TouchArea { clicked => { root.selected_fingerprint_index = idx; } }
+                            HorizontalLayout {
+                                padding-left: 12px;
+                                padding-right: 12px;
+                                Text { text: fp.index; color: #e5c07b; width: 100px; vertical-alignment: center; }
+                                Text { 
+                                    text: fp.description; 
+                                    color: #e0e0e0; 
+                                    vertical-alignment: center; 
+                                    font-weight: 700; 
+                                    horizontal-stretch: 1;
+                                }
+                            }
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 12px;
+                    height: 36px;
+                    Button { text: "Enroll New Fingerprint"; enabled: root.has_bio; clicked => { root.add_fingerprint(); } }
+                    Button {
+                        text: "Rename Selected";
+                        enabled: root.selected_fingerprint_index >= 0 && root.selected_fingerprint_index < root.fingerprints.length;
+                        clicked => {
+                            root.rename_fingerprint_id = root.fingerprints[root.selected_fingerprint_index].index;
+                            root.rename_fingerprint_name = root.fingerprints[root.selected_fingerprint_index].description;
+                            root.show_rename_fingerprint_modal = true;
+                        }
+                    }
+                    Button {
+                        text: "Delete Selected Fingerprint";
+                        enabled: root.selected_fingerprint_index >= 0 && root.selected_fingerprint_index < root.fingerprints.length;
+                        clicked => { root.delete_fingerprint(root.fingerprints[root.selected_fingerprint_index].index); }
+                    }
+                }
+                Rectangle { height: 1px; background: #3f3f4e; }
+                HorizontalLayout {
+                    spacing: 12px;
+                    height: 36px;
+                    Button { text: "Change PIN"; clicked => { root.request_change_pin(); } }
+                    Button { text: "Enforce Always-UV"; enabled: root.has_uv; clicked => { root.enforce_uv(); } }
+                    Button { text: "Factory Reset Token"; clicked => { root.reset_token(); } }
+                }
+            }
+        }
+
+        // Status Bar
+        Rectangle {
+            height: 32px;
+            background: #18181f;
+            border-radius: 4px;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                Text { text: root.status_message; color: root.accent_color; font-size: 13px; vertical-alignment: center; font-weight: 700; }
+            }
+        }
+    }
+}
